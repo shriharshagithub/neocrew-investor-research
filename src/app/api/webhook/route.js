@@ -6,16 +6,35 @@ export async function POST(request) {
   try {
     const body = await request.json();
 
-    // ClickUp sends event + task data
+    // ClickUp webhook sends event + task_id only
     const event = body.event;
-    const task = body.task;
+    const taskId = body.task_id;
 
     // Only handle task creation events
     if (event !== 'taskCreated') {
       return NextResponse.json({ message: 'Not a task creation event' }, { status: 200 });
     }
 
-    const taskId = task?.id;
+    if (!taskId) {
+      return NextResponse.json({ error: 'Missing task_id' }, { status: 400 });
+    }
+
+    // Fetch full task details from ClickUp
+    const taskResponse = await fetch(
+      `https://api.clickup.com/api/v2/task/${taskId}`,
+      {
+        headers: {
+          'Authorization': process.env.CLICKUP_API_TOKEN,
+          'Content-Type': 'application/json',
+        }
+      }
+    );
+
+    if (!taskResponse.ok) {
+      throw new Error('Failed to fetch task details from ClickUp');
+    }
+
+    const task = await taskResponse.json();
     const taskName = task?.name || '';
     const listId = task?.list?.id;
 
@@ -24,8 +43,8 @@ export async function POST(request) {
       return NextResponse.json({ message: 'Not investor pipeline' }, { status: 200 });
     }
 
-    if (!taskId || !taskName) {
-      return NextResponse.json({ error: 'Missing task data' }, { status: 400 });
+    if (!taskName) {
+      return NextResponse.json({ error: 'Missing task name' }, { status: 400 });
     }
 
     // Parse investor name and fund from task name
