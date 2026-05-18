@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 
 const INVESTOR_PIPELINE_LIST_ID = '901614937724';
 
+// In-memory lock — prevents duplicate processing when ClickUp fires webhook multiple times
+const processingTasks = new Set();
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -18,6 +21,16 @@ export async function POST(request) {
     if (!taskId) {
       return NextResponse.json({ error: 'Missing task_id' }, { status: 400 });
     }
+
+    // LOCK — if already processing this task, ignore duplicate webhook
+    if (processingTasks.has(taskId)) {
+      console.log(`Already processing task ${taskId} — ignoring duplicate webhook`);
+      return NextResponse.json({ message: 'Duplicate ignored' }, { status: 200 });
+    }
+    processingTasks.add(taskId);
+
+    // Auto-release lock after 2 minutes
+    setTimeout(() => processingTasks.delete(taskId), 120000);
 
     // Fetch full task details from ClickUp
     const taskResponse = await fetch(
