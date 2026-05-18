@@ -36,9 +36,10 @@ export async function POST(request) {
 
     const task = await taskResponse.json();
     const taskName = task?.name || '';
+    const taskDescription = task?.description || '';
     const listId = task?.list?.id;
 
-    // Only process tasks from Investor Pipeline list
+    // Only process Investor Pipeline tasks
     if (listId !== INVESTOR_PIPELINE_LIST_ID) {
       return NextResponse.json({ message: 'Not investor pipeline' }, { status: 200 });
     }
@@ -47,11 +48,33 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Missing task name' }, { status: 400 });
     }
 
-    // Parse investor name and fund from task name
-    // Expected format: "Investor Name | Fund Name"
+    // DEDUPLICATION — skip if research comment already exists
+    const commentsResponse = await fetch(
+      `https://api.clickup.com/api/v2/task/${taskId}/comment`,
+      { headers: { 'Authorization': process.env.CLICKUP_API_TOKEN } }
+    );
+    if (commentsResponse.ok) {
+      const commentsData = await commentsResponse.json();
+      const alreadyDone = commentsData.comments?.some(c =>
+        c.comment_text?.includes('INVESTOR RESEARCH READY')
+      );
+      if (alreadyDone) {
+        console.log(`Already researched ${taskId} — skipping duplicate`);
+        return NextResponse.json({ message: 'Already researched' }, { status: 200 });
+      }
+    }
+
+    // Extract LinkedIn URL from description if provided
+    const linkedInMatch = taskDescription.match(/https?:\/\/(www\.)?linkedin\.com\/in\/[^\s\n]+/);
+    const linkedInUrl = linkedInMatch ? linkedInMatch[0] : null;
+
     const parts = taskName.split('|');
     const investorName = parts[0]?.trim() || taskName;
     const fund = parts[1]?.trim() || 'fund not specified';
+
+    const linkedInContext = linkedInUrl
+      ? `LinkedIn profile: ${linkedInUrl} — use this to confirm identity and get accurate details.`
+      : `No LinkedIn provided — search carefully using "${investorName} ${fund}" to find the right person.`;
 
     console.log(`Researching: ${investorName} from ${fund}`);
 
@@ -72,12 +95,15 @@ export async function POST(request) {
           role: 'user',
           content: `Research ${investorName} from ${fund} for NeoCrew AI's investor outreach.
 
+${linkedInContext}
+
 Research and find:
 1. Their investment thesis and focus areas
-2. Recent portfolio companies (last 2 years)
-3. Any AI, developer tools, or product development investments
-4. Their background and notable posts or views
+2. Typical cheque size — if below $1M, flag as "BELOW MINIMUM — skip this investor"
+3. Recent portfolio companies (last 2 years)
+4. Any AI, developer tools, or product development investments
 5. Any India or B2B SaaS connections
+6. One specific recent post, investment, or statement to personalise the outreach
 
 Then write a highly personalised outreach message from Amit Singh, co-founder of NeoCrew AI.
 
@@ -102,17 +128,24 @@ The outreach message must:
 
 Format your response EXACTLY like this:
 
-RESEARCH SUMMARY
+RESEARCH — ${investorName} | ${fund}
 ─────────────────────────
-[3-5 bullet points of key findings]
+Thesis: [1 line]
+Stage: [pre-seed / seed / series A]
+Cheque: [range — flag BELOW MINIMUM if under $1M]
+Recent bets: [2-3 companies]
+Thesis fit: [1 line — why NeoCrew fits]
+Reference: [1 specific thing to mention in outreach]
 
 OUTREACH MESSAGE
 ─────────────────────────
-[The personalised message — 3 paragraphs max]
+[3 paragraphs max. Personal. From Amit. Sign off as "Amit".]
 
-TALKING POINTS
+TALKING POINTS (if they reply)
 ─────────────────────────
-[3 bullet points of what to say if they respond]`
+1. [Point]
+2. [Point]
+3. [Point]`
         }]
       })
     });
